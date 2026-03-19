@@ -3,10 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, FormEvent, ChangeEvent, ReactNode } from 'react';
+import { useState, useEffect, FormEvent, ChangeEvent, ReactNode, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { User, MapPin, Phone, Car, CreditCard, ArrowRight, LogOut, CheckCircle2, Tag, Fuel, Truck, Bike, QrCode, Trash2 } from 'lucide-react';
+import { User, MapPin, Phone, Car, CreditCard, ArrowRight, LogOut, CheckCircle2, Tag, Fuel, Truck, Bike, QrCode, Trash2, Camera, X } from 'lucide-react';
 import { QRCodeSVG, QRCodeCanvas } from 'qrcode.react';
+import { Html5QrcodeScanner } from 'html5-qrcode';
+import { jsPDF } from 'jspdf';
 
 interface Transaction {
   id: string;
@@ -26,6 +28,10 @@ interface UserData {
   customQuota?: number;
   transactions?: Transaction[];
   status?: string;
+  nicFrontUrl?: string;
+  nicBackUrl?: string;
+  nicFront?: File | null;
+  nicBack?: File | null;
 }
 
 interface ReceiptInfo {
@@ -45,6 +51,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedUser, setSelectedUser] = useState<UserData | null>(null);
   const [showSuccess, setShowSuccess] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
   const [formData, setFormData] = useState<UserData>({
     fullName: '',
     address: '',
@@ -52,9 +59,60 @@ export default function App() {
     vehicleNumber: '',
     nic: '',
     vehicleCategory: '',
+    nicFront: null,
+    nicBack: null,
   });
 
-  // Load current session from localStorage on mount
+  const scannerRef = useRef<Html5QrcodeScanner | null>(null);
+
+  // Fetch users from backend
+  const fetchUsers = async () => {
+    try {
+      const response = await fetch('/api/users');
+      if (response.ok) {
+        const data = await response.json();
+        setAllUsers(data);
+        return data;
+      }
+    } catch (error) {
+      console.error('Failed to fetch users', error);
+    }
+    return [];
+  };
+
+  useEffect(() => {
+    if (isScanning && view === 'admin-dashboard') {
+      const scanner = new Html5QrcodeScanner(
+        "reader",
+        { fps: 10, qrbox: { width: 250, height: 250 } },
+        /* verbose= */ false
+      );
+      
+      scanner.render((decodedText) => {
+        // Handle successful scan
+        setSearchQuery(decodedText);
+        const user = allUsers.find(u => u.userId === decodedText);
+        if (user) {
+          setSelectedUser(user);
+          setIsScanning(false);
+          scanner.clear();
+        }
+      }, (error) => {
+        // Handle scan error (usually just "no QR code found in frame")
+      });
+
+      scannerRef.current = scanner;
+    }
+
+    return () => {
+      if (scannerRef.current) {
+        scannerRef.current.clear().catch(err => console.error("Failed to clear scanner", err));
+        scannerRef.current = null;
+      }
+    };
+  }, [isScanning, view, allUsers]);
+
+  // Load current session and users on mount
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const receiptParam = params.get('receipt');
@@ -70,16 +128,16 @@ export default function App() {
     }
 
     const currentNic = localStorage.getItem('current_user_nic');
-    const users = JSON.parse(localStorage.getItem('all_vehicle_users') || '[]');
-    setAllUsers(users);
     
-    if (currentNic) {
-      const currentUser = users.find((u: UserData) => u.nic === currentNic);
-      if (currentUser) {
-        setFormData(currentUser);
-        setView('details');
+    fetchUsers().then(users => {
+      if (currentNic) {
+        const currentUser = users.find((u: UserData) => u.nic === currentNic);
+        if (currentUser) {
+          setFormData(currentUser);
+          setView('details');
+        }
       }
-    }
+    });
   }, []);
 
   const handleAdminLogin = (e: FormEvent) => {
@@ -88,67 +146,167 @@ export default function App() {
       setView('admin-dashboard');
       setAdminPassword('');
       setError(null);
+      fetchUsers(); // Refresh users on admin login
     } else {
       setError('Invalid admin password');
     }
   };
 
-  const updateCustomQuota = (nic: string, quota: number) => {
-    const updated = allUsers.map(u => u.nic === nic ? { ...u, customQuota: quota } : u);
-    setAllUsers(updated);
-    localStorage.setItem('all_vehicle_users', JSON.stringify(updated));
-    const updatedUser = updated.find(u => u.nic === nic);
-    if (updatedUser) setSelectedUser(updatedUser);
-  };
-
-  const deleteUser = (nic: string) => {
-    const updated = allUsers.filter(u => u.nic !== nic);
-    setAllUsers(updated);
-    localStorage.setItem('all_vehicle_users', JSON.stringify(updated));
-    if (selectedUser?.nic === nic) setSelectedUser(null);
-    setUserToDelete(null);
-  };
-
-  const markUserSuccess = (nic: string) => {
-    const updated = allUsers.map(u => u.nic === nic ? { ...u, status: 'success' } : u);
-    setAllUsers(updated);
-    localStorage.setItem('all_vehicle_users', JSON.stringify(updated));
-    
-    if (selectedUser?.nic === nic) {
-      setSelectedUser({ ...selectedUser, status: 'success' });
+  const updateCustomQuota = async (nic: string, quota: number) => {
+    try {
+      const response = await fetch(`/api/users/${nic}/quota`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quota }),
+      });
+      if (response.ok) {
+        const updatedUser = await response.json();
+        setAllUsers(prev => prev.map(u => u.nic === nic ? updatedUser : u));
+        if (selectedUser?.nic === nic) setSelectedUser(updatedUser);
+      }
+    } catch (error) {
+      console.error('Failed to update quota', error);
     }
   };
 
-  const recordTransaction = (nic: string, amount: number) => {
+  const deleteUser = async (nic: string) => {
+    try {
+      const response = await fetch(`/api/users/${nic}`, { method: 'DELETE' });
+      if (response.ok) {
+        setAllUsers(prev => prev.filter(u => u.nic !== nic));
+        if (selectedUser?.nic === nic) setSelectedUser(null);
+        setUserToDelete(null);
+      }
+    } catch (error) {
+      console.error('Failed to delete user', error);
+    }
+  };
+
+  const markUserSuccess = async (nic: string) => {
+    try {
+      const response = await fetch(`/api/users/${nic}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'success' }),
+      });
+      if (response.ok) {
+        const updatedUser = await response.json();
+        setAllUsers(prev => prev.map(u => u.nic === nic ? updatedUser : u));
+        if (selectedUser?.nic === nic) setSelectedUser(updatedUser);
+      }
+    } catch (error) {
+      console.error('Failed to update status', error);
+    }
+  };
+
+  const recordTransaction = async (nic: string, amount: number) => {
     if (isNaN(amount) || amount <= 0) return;
 
-    const updated = allUsers.map(u => {
-      if (u.nic === nic) {
-        const newTransaction: Transaction = {
-          id: Math.random().toString(36).substr(2, 9).toUpperCase(),
-          date: new Date().toLocaleString(),
-          amount,
-          station: 'Endana Pirawumhala'
-        };
-        const currentQuota = u.customQuota !== undefined ? u.customQuota : getQuota(u.vehicleCategory);
-        return {
-          ...u,
-          customQuota: Math.max(0, currentQuota - amount),
-          transactions: [newTransaction, ...(u.transactions || [])]
-        };
+    try {
+      const response = await fetch(`/api/users/${nic}/transaction`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount }),
+      });
+      if (response.ok) {
+        const updatedUser = await response.json();
+        setAllUsers(prev => prev.map(u => u.nic === nic ? updatedUser : u));
+        if (selectedUser?.nic === nic) setSelectedUser(updatedUser);
+        
+        // Show success animation
+        setShowSuccess(true);
+        setTimeout(() => setShowSuccess(false), 2000);
       }
-      return u;
-    });
+    } catch (error) {
+      console.error('Failed to record transaction', error);
+    }
+  };
 
-    setAllUsers(updated);
-    localStorage.setItem('all_vehicle_users', JSON.stringify(updated));
+  const generatePDF = (user: UserData) => {
+    const doc = new jsPDF();
     
-    const updatedUser = updated.find(u => u.nic === nic);
-    if (updatedUser) setSelectedUser(updatedUser);
+    // Header
+    doc.setFontSize(24);
+    doc.setTextColor(79, 70, 229); // Indigo-600
+    doc.text('Endana Pirawumhala', 105, 25, { align: 'center' });
+    doc.setFontSize(16);
+    doc.setTextColor(100);
+    doc.text('Fuel Receipt', 105, 35, { align: 'center' });
     
-    // Show success animation
-    setShowSuccess(true);
-    setTimeout(() => setShowSuccess(false), 2000);
+    // Divider
+    doc.setDrawColor(226, 232, 240); // slate-200
+    doc.line(20, 42, 190, 42);
+    
+    // User Info Section
+    doc.setFontSize(12);
+    doc.setTextColor(71, 85, 105); // slate-600
+    doc.setFont('helvetica', 'bold');
+    doc.text('USER INFORMATION', 20, 55);
+    
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(15, 23, 42); // slate-900
+    doc.text(`Name:`, 20, 65);
+    doc.text(`${user.fullName}`, 60, 65);
+    
+    doc.text(`User ID:`, 20, 75);
+    doc.text(`#${user.userId}`, 60, 75);
+    
+    doc.text(`Vehicle Number:`, 20, 85);
+    doc.text(`${user.vehicleNumber}`, 60, 85);
+    
+    doc.text(`Vehicle Category:`, 20, 95);
+    doc.text(`${user.vehicleCategory}`, 60, 95);
+
+    // Fuel Quota
+    const quota = user.customQuota !== undefined ? user.customQuota : getQuota(user.vehicleCategory);
+    doc.text(`Current Fuel Quota:`, 20, 105);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`${quota}L`, 60, 105);
+    doc.setFont('helvetica', 'normal');
+
+    // Transaction Details Section
+    doc.setTextColor(71, 85, 105); // slate-600
+    doc.setFont('helvetica', 'bold');
+    doc.text('TRANSACTION DETAILS', 20, 115);
+    
+    const latestTransaction = user.transactions?.[0];
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(15, 23, 42); // slate-900
+    
+    if (latestTransaction) {
+      doc.text(`Fuel Type:`, 20, 125);
+      doc.text(`Petrol/Diesel`, 60, 125);
+      
+      doc.text(`Liters Issued:`, 20, 135);
+      doc.setFont('helvetica', 'bold');
+      doc.text(`${latestTransaction.amount}L`, 60, 135);
+      doc.setFont('helvetica', 'normal');
+      
+      doc.text(`Date/Time:`, 20, 145);
+      doc.text(`${latestTransaction.date}`, 60, 145);
+      
+      doc.text(`Station:`, 20, 155);
+      doc.text(`${latestTransaction.station}`, 60, 155);
+    } else {
+      doc.setTextColor(148, 163, 184); // slate-400
+      doc.text('No recent transactions found.', 20, 125);
+    }
+    
+    // Status Stamp
+    doc.setFontSize(60);
+    doc.setTextColor(16, 185, 129); // Emerald-500
+    doc.setFont('helvetica', 'bold');
+    doc.text('SUCCESS', 105, 200, { align: 'center', angle: -15 });
+    
+    // Footer
+    doc.setFontSize(10);
+    doc.setTextColor(148, 163, 184); // slate-400
+    doc.setFont('helvetica', 'normal');
+    doc.text('This is a computer generated receipt.', 105, 275, { align: 'center' });
+    doc.text('Endana Pirawumhala Fuel Management System', 105, 282, { align: 'center' });
+    doc.text(`Generated on: ${new Date().toLocaleString()}`, 105, 289, { align: 'center' });
+    
+    doc.save(`Fuel_Receipt_${user.userId}_${user.vehicleNumber}.pdf`);
   };
 
   const handleInputChange = (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -157,31 +315,48 @@ export default function App() {
     if (error) setError(null); // Clear error when user types
   };
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const { name, files } = e.target;
+    if (files && files[0]) {
+      setFormData(prev => ({ ...prev, [name]: files[0] }));
+    }
+  };
+
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     
-    const users = JSON.parse(localStorage.getItem('all_vehicle_users') || '[]');
-    
-    // Check if NIC already exists
-    const exists = users.some((u: UserData) => u.nic.toLowerCase() === formData.nic.toLowerCase());
-    
-    if (exists) {
-      setError('An account with this ID number already exists.');
+    if (!formData.nicFront || !formData.nicBack) {
+      setError('Please upload both NIC Front and Back photos.');
       return;
     }
 
-    // Generate 5-digit User ID
-    const userId = Math.floor(10000 + Math.random() * 90000).toString();
-    const newUser = { ...formData, userId };
-
-    // Save new user
-    const updatedUsers = [...users, newUser];
-    setAllUsers(updatedUsers);
-    setFormData(newUser);
-    localStorage.setItem('all_vehicle_users', JSON.stringify(updatedUsers));
-    localStorage.setItem('current_user_nic', formData.nic);
+    const formDataToSend = new FormData();
+    formDataToSend.append('nicFront', formData.nicFront);
+    formDataToSend.append('nicBack', formData.nicBack);
     
-    setView('details');
+    const { nicFront, nicBack, ...rest } = formData;
+    formDataToSend.append('userData', JSON.stringify(rest));
+
+    try {
+      const response = await fetch('/api/register', {
+        method: 'POST',
+        body: formDataToSend,
+      });
+
+      if (response.ok) {
+        const newUser = await response.json();
+        setAllUsers(prev => [...prev, newUser]);
+        setFormData(newUser);
+        localStorage.setItem('current_user_nic', newUser.nic);
+        setView('details');
+      } else {
+        const errorData = await response.json();
+        setError(errorData.error || 'Registration failed.');
+      }
+    } catch (err) {
+      setError('An error occurred during registration.');
+      console.error(err);
+    }
   };
 
   const downloadQRCode = () => {
@@ -206,6 +381,8 @@ export default function App() {
       vehicleNumber: '',
       nic: '',
       vehicleCategory: '',
+      nicFront: null,
+      nicBack: null,
     });
     setError(null);
     setView('form');
@@ -361,6 +538,55 @@ export default function App() {
                   </div>
                 </div>
 
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-2">
+                    <label htmlFor="nicFront" className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                      <Camera size={16} className="text-indigo-500" />
+                      NIC Front Photo
+                    </label>
+                    <div className="relative">
+                      <input
+                        required
+                        type="file"
+                        id="nicFront"
+                        name="nicFront"
+                        accept="image/*"
+                        capture="environment"
+                        onChange={handleFileChange}
+                        className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all outline-none bg-slate-50/50 file:mr-4 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-indigo-50 file:text-indigo-600 hover:file:bg-indigo-100 cursor-pointer"
+                      />
+                      {formData.nicFront && (
+                        <div className="absolute right-3 top-1/2 -translate-y-1/2 text-emerald-500">
+                          <CheckCircle2 size={18} />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <label htmlFor="nicBack" className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                      <Camera size={16} className="text-indigo-500" />
+                      NIC Back Photo
+                    </label>
+                    <div className="relative">
+                      <input
+                        required
+                        type="file"
+                        id="nicBack"
+                        name="nicBack"
+                        accept="image/*"
+                        capture="environment"
+                        onChange={handleFileChange}
+                        className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all outline-none bg-slate-50/50 file:mr-4 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-indigo-50 file:text-indigo-600 hover:file:bg-indigo-100 cursor-pointer"
+                      />
+                      {formData.nicBack && (
+                        <div className="absolute right-3 top-1/2 -translate-y-1/2 text-emerald-500">
+                          <CheckCircle2 size={18} />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
                 <button
                   type="submit"
                   className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 rounded-xl shadow-lg shadow-indigo-100 transition-all flex items-center justify-center gap-2 group"
@@ -426,6 +652,13 @@ export default function App() {
                   <p className="text-slate-500 text-sm font-medium">Admin Management Portal</p>
                 </div>
                 <div className="flex items-center gap-4 w-full md:w-auto">
+                  <button 
+                    onClick={() => setIsScanning(!isScanning)}
+                    className={`flex items-center gap-2 font-bold text-sm px-4 py-2.5 rounded-xl transition-all shadow-sm ${isScanning ? 'bg-red-500 text-white' : 'bg-indigo-600 text-white'}`}
+                  >
+                    {isScanning ? <X size={18} /> : <Camera size={18} />}
+                    {isScanning ? 'Close Scanner' : 'Scan QR'}
+                  </button>
                   <div className="relative flex-1 md:w-64">
                     <input 
                       type="text"
@@ -441,6 +674,7 @@ export default function App() {
                       setView('form');
                       setSelectedUser(null);
                       setSearchQuery('');
+                      setIsScanning(false);
                     }}
                     className="flex items-center gap-2 text-slate-500 hover:text-red-500 font-bold text-sm px-4 py-2 rounded-xl hover:bg-red-50 transition-all"
                   >
@@ -448,6 +682,24 @@ export default function App() {
                   </button>
                 </div>
               </div>
+
+              <AnimatePresence>
+                {isScanning && (
+                  <motion.div 
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="bg-white p-6 rounded-3xl border border-slate-200 overflow-hidden"
+                  >
+                    <div className="max-w-md mx-auto">
+                      <div id="reader" className="overflow-hidden rounded-2xl border-4 border-indigo-100"></div>
+                      <p className="text-center text-slate-400 text-xs font-bold mt-4 uppercase tracking-widest">
+                        Align QR Code within the frame to scan
+                      </p>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div className="lg:col-span-2 space-y-6">
@@ -602,6 +854,48 @@ export default function App() {
                             >
                               Edit Quota
                             </button>
+                          </div>
+                          <button 
+                            onClick={() => generatePDF(selectedUser)}
+                            className="w-full bg-slate-900 hover:bg-slate-800 text-white py-3 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2"
+                          >
+                            Download Receipt / Print Details
+                          </button>
+                        </div>
+
+                        <div className="space-y-4">
+                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Identity Verification</p>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                              <p className="text-[10px] font-bold text-slate-500 uppercase text-center">NIC Front</p>
+                              <div className="aspect-video bg-slate-100 rounded-xl border border-slate-200 overflow-hidden flex items-center justify-center">
+                                {selectedUser.nicFrontUrl ? (
+                                  <img 
+                                    src={selectedUser.nicFrontUrl} 
+                                    alt="NIC Front" 
+                                    className="w-full h-full object-cover cursor-pointer hover:scale-110 transition-transform"
+                                    onClick={() => window.open(selectedUser.nicFrontUrl, '_blank')}
+                                  />
+                                ) : (
+                                  <Camera className="text-slate-300" size={24} />
+                                )}
+                              </div>
+                            </div>
+                            <div className="space-y-2">
+                              <p className="text-[10px] font-bold text-slate-500 uppercase text-center">NIC Back</p>
+                              <div className="aspect-video bg-slate-100 rounded-xl border border-slate-200 overflow-hidden flex items-center justify-center">
+                                {selectedUser.nicBackUrl ? (
+                                  <img 
+                                    src={selectedUser.nicBackUrl} 
+                                    alt="NIC Back" 
+                                    className="w-full h-full object-cover cursor-pointer hover:scale-110 transition-transform"
+                                    onClick={() => window.open(selectedUser.nicBackUrl, '_blank')}
+                                  />
+                                ) : (
+                                  <Camera className="text-slate-300" size={24} />
+                                )}
+                              </div>
+                            </div>
                           </div>
                         </div>
 
@@ -813,13 +1107,7 @@ export default function App() {
                         />
                       </div>
                       <QRCodeSVG 
-                        value={JSON.stringify({
-                          name: formData.fullName,
-                          nic: formData.nic,
-                          vehicle: formData.vehicleNumber,
-                          category: formData.vehicleCategory,
-                          date: new Date().toLocaleDateString()
-                        })}
+                        value={formData.userId || ''}
                         size={120}
                         level="H"
                         includeMargin={true}
@@ -876,7 +1164,7 @@ export default function App() {
                       Download Receipt
                     </button>
                     <button
-                      onClick={() => window.print()}
+                      onClick={() => generatePDF(formData)}
                       className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-4 px-6 rounded-xl transition-all flex items-center justify-center gap-2"
                     >
                       Print Details
