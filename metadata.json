@@ -1,0 +1,5 @@
+{
+  "name": "Endana Pirawumhala Admin Management Portal",
+  "description": "A secure and professional fuel management system for Endana Pirawumhala, featuring user registration, 5-digit User ID generation, and real-time transaction tracking.",
+  "requestFramePermissions": []
+}
