@@ -42,9 +42,10 @@ interface ReceiptInfo {
 }
 
 export default function App() {
-  const [view, setView] = useState<'form' | 'details' | 'admin-login' | 'admin-dashboard' | 'public-receipt'>('form');
+  const [view, setView] = useState<'form' | 'user-dashboard' | 'admin-login' | 'admin-dashboard' | 'public-receipt' | 'user-login'>('form');
   const [error, setError] = useState<string | null>(null);
   const [adminPassword, setAdminPassword] = useState('');
+  const [userNicLogin, setUserNicLogin] = useState('');
   const [allUsers, setAllUsers] = useState<UserData[]>([]);
   const [receiptData, setReceiptData] = useState<ReceiptInfo | null>(null);
   const [userToDelete, setUserToDelete] = useState<string | null>(null);
@@ -135,11 +136,25 @@ export default function App() {
         const currentUser = users.find((u: UserData) => u.nic === currentNic);
         if (currentUser) {
           setFormData(currentUser);
-          setView('details');
+          setView('user-dashboard');
         }
       }
     });
   }, []);
+
+  const handleUserLogin = (e: FormEvent) => {
+    e.preventDefault();
+    const user = allUsers.find(u => u.nic === userNicLogin);
+    if (user) {
+      setFormData(user);
+      localStorage.setItem('current_user_nic', user.nic);
+      setView('user-dashboard');
+      setUserNicLogin('');
+      setError(null);
+    } else {
+      setError('NIC not found. Please register first.');
+    }
+  };
 
   const handleAdminLogin = (e: FormEvent) => {
     e.preventDefault();
@@ -353,7 +368,7 @@ export default function App() {
         setAllUsers(prev => [...prev, newUser]);
         setFormData(newUser);
         localStorage.setItem('current_user_nic', newUser.nic);
-        setView('details');
+        setView('user-dashboard');
       } else {
         const errorData = await response.json();
         setError(errorData.error || 'Registration failed.');
@@ -613,13 +628,62 @@ export default function App() {
                 </button>
               </form>
               
-              <div className="mt-8 text-center">
+              <div className="mt-8 flex flex-col items-center gap-4">
+                <button 
+                  onClick={() => setView('user-login')}
+                  className="text-indigo-600 hover:text-indigo-700 text-sm font-bold transition-colors"
+                >
+                  Already Registered? Check Dashboard
+                </button>
                 <button 
                   onClick={() => setView('admin-login')}
                   className="text-slate-400 hover:text-indigo-500 text-sm font-medium transition-colors"
                 >
                   Admin Access
                 </button>
+              </div>
+            </motion.div>
+          ) : view === 'user-login' ? (
+            <motion.div
+              key="user-login"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="max-w-md mx-auto"
+            >
+              <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200">
+                <div className="text-center mb-6">
+                  <div className="inline-flex items-center justify-center w-12 h-12 bg-indigo-100 text-indigo-600 rounded-xl mb-4">
+                    <User size={24} />
+                  </div>
+                  <h2 className="text-2xl font-bold">User Dashboard Login</h2>
+                  <p className="text-slate-500 text-sm mt-1">Enter your NIC to access your fuel quota</p>
+                </div>
+                
+                <form onSubmit={handleUserLogin} className="space-y-4">
+                  {error && <p className="text-red-500 text-sm text-center font-medium bg-red-50 py-2 rounded-lg">{error}</p>}
+                  <div className="space-y-2">
+                    <label className="text-sm font-semibold text-slate-700">NIC Number</label>
+                    <input
+                      type="text"
+                      required
+                      value={userNicLogin}
+                      onChange={(e) => setUserNicLogin(e.target.value)}
+                      className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none bg-slate-50/50"
+                      placeholder="987654321V"
+                    />
+                  </div>
+                  <button className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-4 rounded-xl font-bold shadow-lg shadow-indigo-100 transition-all">
+                    Access Dashboard
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={() => setView('form')}
+                    className="w-full text-slate-400 text-sm font-medium hover:text-slate-600 transition-colors"
+                  >
+                    Back to Registration
+                  </button>
+                </form>
               </div>
             </motion.div>
           ) : view === 'admin-login' ? (
@@ -1076,7 +1140,7 @@ export default function App() {
             </motion.div>
           ) : (
             <motion.div
-              key="details-view"
+              key="user-dashboard"
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
@@ -1089,7 +1153,7 @@ export default function App() {
                   <div className="relative z-10">
                     <div className="flex items-center gap-3 mb-4">
                       <CheckCircle2 size={24} className="text-indigo-200" />
-                      <span className="text-indigo-100 font-medium tracking-wide uppercase text-xs">Registration Successful</span>
+                      <span className="text-indigo-100 font-medium tracking-wide uppercase text-xs">User Dashboard</span>
                     </div>
                     <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
                       <div>
