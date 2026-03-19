@@ -77,6 +77,18 @@ app.post("/api/register", upload.fields([
   try {
     const files = req.files as { [fieldname: string]: Express.Multer.File[] };
     const userData = JSON.parse(req.body.userData);
+
+    // Check for duplicates
+    if (users.some(u => u.nic === userData.nic)) {
+      return res.status(400).json({ error: "This NIC is already registered." });
+    }
+    if (users.some(u => u.vehicleNumber === userData.vehicleNumber)) {
+      return res.status(400).json({ error: "This Vehicle Number is already registered." });
+    }
+
+    if (!files || !files.nicFront || !files.nicBack) {
+      return res.status(400).json({ error: "NIC photos are required." });
+    }
     
     const newUser = {
       ...userData,

@@ -52,6 +52,7 @@ export default function App() {
   const [selectedUser, setSelectedUser] = useState<UserData | null>(null);
   const [showSuccess, setShowSuccess] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [formData, setFormData] = useState<UserData>({
     fullName: '',
     address: '',
@@ -331,6 +332,9 @@ export default function App() {
       return;
     }
 
+    setIsSubmitting(true);
+    setError(null);
+
     const formDataToSend = new FormData();
     formDataToSend.append('nicFront', formData.nicFront);
     formDataToSend.append('nicBack', formData.nicBack);
@@ -357,6 +361,8 @@ export default function App() {
     } catch (err) {
       setError('An error occurred during registration.');
       console.error(err);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -590,10 +596,20 @@ export default function App() {
 
                 <button
                   type="submit"
-                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 rounded-xl shadow-lg shadow-indigo-100 transition-all flex items-center justify-center gap-2 group"
+                  disabled={isSubmitting}
+                  className={`w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 rounded-xl shadow-lg shadow-indigo-100 transition-all flex items-center justify-center gap-2 group ${isSubmitting ? 'opacity-70 cursor-not-allowed' : ''}`}
                 >
-                  Complete Registration
-                  <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
+                  {isSubmitting ? (
+                    <div className="flex items-center gap-2">
+                      <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      Processing...
+                    </div>
+                  ) : (
+                    <>
+                      Complete Registration
+                      <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
+                    </>
+                  )}
                 </button>
               </form>
               
