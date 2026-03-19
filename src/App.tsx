@@ -1168,7 +1168,29 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="p-8 md:p-12 space-y-8">
+                <div className="p-8 md:p-12 space-y-8 relative">
+                  {formData.status !== 'success' && (
+                    <div className="absolute inset-0 z-20 bg-white/80 backdrop-blur-sm flex items-center justify-center p-8 text-center">
+                      <div className="max-w-sm">
+                        <div className="w-16 h-16 bg-amber-50 text-amber-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                          <Tag size={32} className="animate-pulse" />
+                        </div>
+                        <h3 className="text-xl font-bold text-slate-900 mb-2">Verification Pending</h3>
+                        <p className="text-slate-500 text-sm leading-relaxed">
+                          Your identity verification is currently in progress. You will have full access to your fuel quota once an administrator approves your registration.
+                        </p>
+                        <div className="mt-6 p-4 bg-amber-50 rounded-2xl border border-amber-100">
+                          <p className="text-xs font-bold text-amber-700 uppercase tracking-widest">Status: Pending Admin Review</p>
+                        </div>
+                        <button
+                          onClick={handleReset}
+                          className="mt-8 text-slate-400 hover:text-indigo-600 text-sm font-medium transition-colors"
+                        >
+                          Cancel & Register Again
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   <div className="flex flex-col md:flex-row gap-8 items-start">
                     <div className="flex-1 w-full">
                       <FuelQuotaWidget category={formData.vehicleCategory} formData={formData} />
