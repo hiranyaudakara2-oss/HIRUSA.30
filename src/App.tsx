@@ -142,7 +142,8 @@ export default function App() {
 
   const handleAdminLogin = (e: FormEvent) => {
     e.preventDefault();
-    if (adminPassword === '123') {
+    const correctPassword = import.meta.env.VITE_ADMIN_PASSWORD || '123';
+    if (adminPassword === correctPassword) {
       setView('admin-dashboard');
       setAdminPassword('');
       setError(null);
